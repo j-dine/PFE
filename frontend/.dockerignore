@@ -1,0 +1,7 @@
+node_modules
+dist
+.vite
+.git
+.npmrc
+npm-debug.log*
+pnpm-debug.log*

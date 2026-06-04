@@ -1,0 +1,37 @@
+# Discovery Service - Production Profile
+spring:
+  application:
+    name: discovery-service
+  profiles:
+    active: prod
+
+server:
+  port: 8761
+  servlet:
+    context-path: /
+
+eureka:
+  instance:
+    hostname: discovery-service
+    instanceId: ${spring.application.name}:${spring.application.instance_id:${server.port}}
+    prefer-ip-address: false
+    metadata-map:
+      version: 1.0.0
+  server:
+    enable-self-preservation: false
+    eviction-interval-timer-in-ms: 10000
+    response-cache-update-interval-ms: 30000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    root: INFO
+    com.netflix: INFO

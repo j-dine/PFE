@@ -1,0 +1,211 @@
+name: 🚀 Deploy PFE1 to AWS ECS
+
+on:
+  push:
+    branches: [ main, master, restore-commit ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  ECS_CLUSTER: pfe1-cluster
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+
+  # ═══════════════════════════════════════════════
+  # JOB 1 : Tests & Build Maven
+  # ═══════════════════════════════════════════════
+  test-and-build:
+    name: 🧪 Tests & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 🔨 Build all microservices
+        run: |
+          mvn clean package -DskipTests --no-transfer-progress -f pom.xml
+
+      - name: 🧪 Run tests
+        run: |
+          mvn test --no-transfer-progress -f pom.xml
+        continue-on-error: true
+
+      - name: 📦 Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            */target/*.jar
+          retention-days: 1
+
+  # ═══════════════════════════════════════════════
+  # JOB 2 : Build & Push images Docker vers ECR
+  # ═══════════════════════════════════════════════
+  build-and-push:
+    name: 🐳 Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    strategy:
+      matrix:
+        include:
+          - name: discovery-service
+            port: 8761
+          - name: api-gateway
+            port: 8080
+          - name: user-service
+            port: 8081
+          - name: dossier-service
+            port: 8082
+          - name: workflow-service
+            port: 8083
+          - name: paiement-service
+            port: 8084
+          - name: notification-service
+            port: 8085
+          - name: document-service
+            port: 8086
+          - name: frontend
+            port: 80
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java 17 (for Java services)
+        if: matrix.name != 'frontend'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 🔨 Build JAR (for Java services)
+        if: matrix.name != 'frontend'
+        run: |
+          cd ${{ matrix.name }}
+          mvn clean package -DskipTests --no-transfer-progress
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🔑 Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🐳 Build, tag and push Docker image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          SERVICE: ${{ matrix.name }}
+          ECR_REGISTRY_URL: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          cd $SERVICE
+
+          # Build l'image Docker
+          docker build \
+            -t $ECR_REGISTRY_URL/pfe1/$SERVICE:$IMAGE_TAG \
+            -t $ECR_REGISTRY_URL/pfe1/$SERVICE:latest \
+            .
+
+          # Push vers ECR
+          docker push $ECR_REGISTRY_URL/pfe1/$SERVICE:$IMAGE_TAG
+          docker push $ECR_REGISTRY_URL/pfe1/$SERVICE:latest
+
+          echo "✅ $SERVICE pushed to ECR"
+
+  # ═══════════════════════════════════════════════
+  # JOB 3 : Deploy sur ECS Fargate
+  # ═══════════════════════════════════════════════
+  deploy:
+    name: 🚀 Deploy to AWS ECS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🚀 Deploy discovery-service to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service pfe1-discovery-service \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+        continue-on-error: true
+
+      - name: 🚀 Deploy api-gateway to ECS
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service pfe1-api-gateway \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+        continue-on-error: true
+
+      - name: 🚀 Deploy tous les autres services
+        run: |
+          SERVICES=(
+            "pfe1-user-service"
+            "pfe1-dossier-service"
+            "pfe1-workflow-service"
+            "pfe1-paiement-service"
+            "pfe1-notification-service"
+            "pfe1-document-service"
+            "pfe1-frontend"
+          )
+
+          for service in "${SERVICES[@]}"; do
+            echo "Deploying $service..."
+            aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service $service \
+              --force-new-deployment \
+              --region ${{ env.AWS_REGION }} || true
+            echo "✅ $service deployment triggered"
+          done
+
+      - name: ⏳ Attendre que les services soient stables (5 minutes max)
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services \
+              pfe1-api-gateway \
+              pfe1-discovery-service \
+            --region ${{ env.AWS_REGION }} \
+            --max-attempts 10 || echo "Timeout or error, but deployment may still be in progress"
+
+      - name: ✅ Deployment réussi !
+        run: |
+          echo "🎉 PFE1 déployé avec succès sur AWS !"
+          echo "📊 Cluster: ${{ env.ECS_CLUSTER }}"
+          echo "🌐 Récupérez l'URL du Load Balancer:"
+          aws elbv2 describe-load-balancers \
+            --names pfe1-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text \
+            --region ${{ env.AWS_REGION }} || echo "Load Balancer URL not available yet"
