@@ -6,9 +6,13 @@
                   targetNamespace="http://example.com/workflow">
 
   <!--
-    Workflow BO (aligné cahier des charges) :
-    Reception (auto) -> Enregistrement (BO) -> Traitement (Service) -> Validation (Responsable)
-    -> Paiement (Financier) -> Archivage (BO/auto) | Rejet.
+    Workflow complet (cahier des charges §4.4) :
+    1. Réception (auto)
+    2. Enregistrement (BO)
+    3. Traitement (RH | TECHNIQUE | JURIDIQUE | FINANCIER) — sauf dossiers DG direct
+    4. Validation hiérarchique (DG = responsable hiérarchique)
+    5. Paiement (FINANCIER, si applicable)
+    6. Archivage (BO)
   -->
   <bpmn:process id="dossier-process" name="Dossier Process" isExecutable="true" camunda:historyTimeToLive="P30D">
 
@@ -26,99 +30,115 @@
       <bpmn:outgoing>Flow_EnregToEnregStatus</bpmn:outgoing>
     </bpmn:userTask>
 
-    <bpmn:serviceTask id="Task_EnregistrementStatus" name="MAJ statut ENREGISTRE" camunda:delegateExpression="${enregistrementDelegate}">
+    <bpmn:serviceTask id="Task_EnregistrementStatus" name="MAJ statut ENREGISTRE + routage service" camunda:delegateExpression="${enregistrementDelegate}">
       <bpmn:incoming>Flow_EnregToEnregStatus</bpmn:incoming>
-      <bpmn:outgoing>Flow_EnregStatusToDoc</bpmn:outgoing>
+      <bpmn:outgoing>Flow_EnregStatusToSkipGateway</bpmn:outgoing>
     </bpmn:serviceTask>
 
-    <bpmn:serviceTask id="Task_Document" name="Document (optionnel)" camunda:delegateExpression="${documentDelegate}">
-      <bpmn:incoming>Flow_EnregStatusToDoc</bpmn:incoming>
-      <bpmn:outgoing>Flow_DocToTraitement</bpmn:outgoing>
-    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_SkipTraitement" name="Routage traitement">
+      <bpmn:incoming>Flow_EnregStatusToSkipGateway</bpmn:incoming>
+      <bpmn:incoming>Flow_ToComplement</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToValidationDirect</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToTraitement</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
 
-    <bpmn:userTask id="UserTask_Traitement" name="Traitement" camunda:candidateGroups="SERVICE">
-      <bpmn:incoming>Flow_DocToTraitement</bpmn:incoming>
+    <bpmn:userTask id="UserTask_Traitement" name="Traitement service" camunda:candidateGroups="${serviceCibleGroup}">
+      <bpmn:incoming>Flow_ToTraitement</bpmn:incoming>
       <bpmn:outgoing>Flow_TraitementToTraitementStatus</bpmn:outgoing>
     </bpmn:userTask>
 
-    <bpmn:serviceTask id="Task_TraitementStatus" name="MAJ statut EN_TRAITEMENT" camunda:delegateExpression="${traitementDelegate}">
+    <bpmn:serviceTask id="Task_TraitementStatus" name="MAJ statut EN_TRAITEMENT + notifier DG" camunda:delegateExpression="${traitementDelegate}">
       <bpmn:incoming>Flow_TraitementToTraitementStatus</bpmn:incoming>
       <bpmn:outgoing>Flow_TraitementStatusToValidation</bpmn:outgoing>
     </bpmn:serviceTask>
 
-    <bpmn:userTask id="UserTask_Validation" name="Validation" camunda:candidateGroups="RESPONSABLE">
+    <bpmn:userTask id="UserTask_Validation" name="Validation hiérarchique (DG)" camunda:candidateGroups="DG">
+      <bpmn:incoming>Flow_ToValidationDirect</bpmn:incoming>
       <bpmn:incoming>Flow_TraitementStatusToValidation</bpmn:incoming>
       <bpmn:outgoing>Flow_ValidationToValidationStatus</bpmn:outgoing>
     </bpmn:userTask>
 
-    <bpmn:serviceTask id="Task_ValidationStatus" name="MAJ statut VALIDE/REJETE" camunda:delegateExpression="${validationDelegate}">
+    <bpmn:serviceTask id="Task_ValidationStatus" name="MAJ statut validation DG" camunda:delegateExpression="${validationDelegate}">
       <bpmn:incoming>Flow_ValidationToValidationStatus</bpmn:incoming>
-      <bpmn:outgoing>Flow_ValidationStatusToDecision</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ValidationStatusToGateway</bpmn:outgoing>
     </bpmn:serviceTask>
 
-    <bpmn:exclusiveGateway id="Gateway_ValidationDecision" name="Decision validation">
-      <bpmn:incoming>Flow_ValidationStatusToDecision</bpmn:incoming>
-      <bpmn:outgoing>Flow_ToPaiement</bpmn:outgoing>
+    <bpmn:exclusiveGateway id="Gateway_Validation" name="Decision DG">
+      <bpmn:incoming>Flow_ValidationStatusToGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToComplement</bpmn:outgoing>
       <bpmn:outgoing>Flow_ToRejet</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToPaiement</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ToArchivageDirect</bpmn:outgoing>
     </bpmn:exclusiveGateway>
 
-    <bpmn:userTask id="UserTask_Paiement" name="Paiement" camunda:candidateGroups="FINANCIER">
+    <bpmn:userTask id="UserTask_Paiement" name="Reglement financier" camunda:candidateGroups="FINANCIER">
       <bpmn:incoming>Flow_ToPaiement</bpmn:incoming>
       <bpmn:outgoing>Flow_PaiementToPaiementStatus</bpmn:outgoing>
     </bpmn:userTask>
 
-    <bpmn:serviceTask id="Task_PaiementStatus" name="MAJ paiement + statut PAYE" camunda:delegateExpression="${paiementDelegate}">
+    <bpmn:serviceTask id="Task_PaiementStatus" name="MAJ statut PAYE + enregistrement paiement" camunda:delegateExpression="${paiementDelegate}">
       <bpmn:incoming>Flow_PaiementToPaiementStatus</bpmn:incoming>
-      <bpmn:outgoing>Flow_PaiementStatusToArchivageUser</bpmn:outgoing>
+      <bpmn:outgoing>Flow_PaiementStatusToArchivage</bpmn:outgoing>
     </bpmn:serviceTask>
 
     <bpmn:userTask id="UserTask_Archivage" name="Archivage" camunda:candidateGroups="BO">
-      <bpmn:incoming>Flow_PaiementStatusToArchivageUser</bpmn:incoming>
+      <bpmn:incoming>Flow_ToArchivageDirect</bpmn:incoming>
+      <bpmn:incoming>Flow_PaiementStatusToArchivage</bpmn:incoming>
+      <bpmn:incoming>Flow_RejetToArchivage</bpmn:incoming>
       <bpmn:outgoing>Flow_ArchivageUserToArchivageStatus</bpmn:outgoing>
     </bpmn:userTask>
 
     <bpmn:serviceTask id="Task_ArchivageStatus" name="Archivage (lock + notify)" camunda:delegateExpression="${archivageDelegate}">
       <bpmn:incoming>Flow_ArchivageUserToArchivageStatus</bpmn:incoming>
-      <bpmn:outgoing>Flow_ArchivageToEndArchived</bpmn:outgoing>
+      <bpmn:outgoing>Flow_ArchivageToEnd</bpmn:outgoing>
     </bpmn:serviceTask>
 
     <bpmn:endEvent id="EndEvent_Archived" name="Dossier archive">
-      <bpmn:incoming>Flow_ArchivageToEndArchived</bpmn:incoming>
+      <bpmn:incoming>Flow_ArchivageToEnd</bpmn:incoming>
     </bpmn:endEvent>
 
     <bpmn:serviceTask id="Task_Rejet" name="Rejet (notify)" camunda:delegateExpression="${rejetDelegate}">
       <bpmn:incoming>Flow_ToRejet</bpmn:incoming>
-      <bpmn:outgoing>Flow_RejetToEndRejected</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RejetToArchivage</bpmn:outgoing>
     </bpmn:serviceTask>
-
-    <bpmn:endEvent id="EndEvent_Rejected" name="Dossier rejete">
-      <bpmn:incoming>Flow_RejetToEndRejected</bpmn:incoming>
-    </bpmn:endEvent>
 
     <!-- Sequence flows -->
     <bpmn:sequenceFlow id="Flow_StartToReception" sourceRef="StartEvent_Dossier" targetRef="Task_Reception"/>
     <bpmn:sequenceFlow id="Flow_ReceptionToEnreg" sourceRef="Task_Reception" targetRef="UserTask_Enregistrement"/>
     <bpmn:sequenceFlow id="Flow_EnregToEnregStatus" sourceRef="UserTask_Enregistrement" targetRef="Task_EnregistrementStatus"/>
-    <bpmn:sequenceFlow id="Flow_EnregStatusToDoc" sourceRef="Task_EnregistrementStatus" targetRef="Task_Document"/>
-    <bpmn:sequenceFlow id="Flow_DocToTraitement" sourceRef="Task_Document" targetRef="UserTask_Traitement"/>
+    <bpmn:sequenceFlow id="Flow_EnregStatusToSkipGateway" sourceRef="Task_EnregistrementStatus" targetRef="Gateway_SkipTraitement"/>
+
+    <bpmn:sequenceFlow id="Flow_ToValidationDirect" sourceRef="Gateway_SkipTraitement" targetRef="UserTask_Validation">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${serviceCibleGroup == 'DG'}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToTraitement" sourceRef="Gateway_SkipTraitement" targetRef="UserTask_Traitement">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${serviceCibleGroup != 'DG'}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
     <bpmn:sequenceFlow id="Flow_TraitementToTraitementStatus" sourceRef="UserTask_Traitement" targetRef="Task_TraitementStatus"/>
     <bpmn:sequenceFlow id="Flow_TraitementStatusToValidation" sourceRef="Task_TraitementStatus" targetRef="UserTask_Validation"/>
     <bpmn:sequenceFlow id="Flow_ValidationToValidationStatus" sourceRef="UserTask_Validation" targetRef="Task_ValidationStatus"/>
-    <bpmn:sequenceFlow id="Flow_ValidationStatusToDecision" sourceRef="Task_ValidationStatus" targetRef="Gateway_ValidationDecision"/>
+    <bpmn:sequenceFlow id="Flow_ValidationStatusToGateway" sourceRef="Task_ValidationStatus" targetRef="Gateway_Validation"/>
 
-    <bpmn:sequenceFlow id="Flow_ToPaiement" sourceRef="Gateway_ValidationDecision" targetRef="UserTask_Paiement">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${isValidated == true}</bpmn:conditionExpression>
+    <bpmn:sequenceFlow id="Flow_ToComplement" sourceRef="Gateway_Validation" targetRef="Gateway_SkipTraitement">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${validationDecision == 'COMPLEMENT'}</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="Flow_ToRejet" sourceRef="Gateway_ValidationDecision" targetRef="Task_Rejet">
-      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${isValidated == false}</bpmn:conditionExpression>
+
+    <bpmn:sequenceFlow id="Flow_ToRejet" sourceRef="Gateway_Validation" targetRef="Task_Rejet">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${validationDecision == 'REJETE'}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToPaiement" sourceRef="Gateway_Validation" targetRef="UserTask_Paiement">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${validationDecision == 'APPROUVE' &amp;&amp; requiresPayment == true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_ToArchivageDirect" sourceRef="Gateway_Validation" targetRef="UserTask_Archivage">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${validationDecision == 'APPROUVE' &amp;&amp; (requiresPayment == false || requiresPayment == null)}</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
 
     <bpmn:sequenceFlow id="Flow_PaiementToPaiementStatus" sourceRef="UserTask_Paiement" targetRef="Task_PaiementStatus"/>
-    <bpmn:sequenceFlow id="Flow_PaiementStatusToArchivageUser" sourceRef="Task_PaiementStatus" targetRef="UserTask_Archivage"/>
+    <bpmn:sequenceFlow id="Flow_PaiementStatusToArchivage" sourceRef="Task_PaiementStatus" targetRef="UserTask_Archivage"/>
+    <bpmn:sequenceFlow id="Flow_RejetToArchivage" sourceRef="Task_Rejet" targetRef="UserTask_Archivage"/>
     <bpmn:sequenceFlow id="Flow_ArchivageUserToArchivageStatus" sourceRef="UserTask_Archivage" targetRef="Task_ArchivageStatus"/>
-    <bpmn:sequenceFlow id="Flow_ArchivageToEndArchived" sourceRef="Task_ArchivageStatus" targetRef="EndEvent_Archived"/>
-    <bpmn:sequenceFlow id="Flow_RejetToEndRejected" sourceRef="Task_Rejet" targetRef="EndEvent_Rejected"/>
+    <bpmn:sequenceFlow id="Flow_ArchivageToEnd" sourceRef="Task_ArchivageStatus" targetRef="EndEvent_Archived"/>
 
   </bpmn:process>
 </bpmn:definitions>
-

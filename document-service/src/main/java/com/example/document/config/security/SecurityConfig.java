@@ -25,8 +25,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/documents/**").authenticated()
-                        // Only BO/Admin can upload/create metadata or delete.
-                        .requestMatchers(HttpMethod.POST, "/api/documents/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_AGENT_BUREAU_ORDRE")
+                        // Any authenticated user can upload documents.
+                        .requestMatchers(HttpMethod.POST, "/api/documents/**").authenticated()
+                        // Only BO/Admin can delete documents.
                         .requestMatchers(HttpMethod.DELETE, "/api/documents/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_AGENT_BUREAU_ORDRE")
                         .anyRequest().authenticated())
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

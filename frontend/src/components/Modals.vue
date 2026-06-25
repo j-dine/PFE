@@ -4,6 +4,7 @@ import { ref } from 'vue'
 import { useAppStore } from '../stores/appStore'
 import { WorkflowStatuts } from '../constants/workflow'
 import DocumentsSection from './DocumentsSection.vue'
+import DossierCommentsSection from './DossierCommentsSection.vue'
 
 const store = useAppStore()
 
@@ -22,13 +23,24 @@ const todayISO = computed(() => store.todayISO)
 const uploadFiles = ref<File[]>([])
 const uploadType = ref('Document original')
 const uploadComment = ref('')
+const newDossierFiles = ref<File[]>([])
 const decisionComment = ref('')
 const commentText = ref('')
 const commentVisibility = ref('agent')
 const archiveNote = ref('')
+const newDossierForm = ref({
+  type: 'Entrant',
+  dateReception: new Date().toISOString().split('T')[0],
+  expediteur: '',
+  objet: '',
+  serviceCible: 'Direction Générale',
+  priorite: 'Normal',
+  remarques: ''
+})
 const archiveDetailsLoading = computed(() => store.archiveDetailsLoading)
 const archiveDetailsDossier = computed(() => store.archiveDetailsDossier)
 const archiveDetailsDocuments = computed(() => store.archiveDetailsDocuments)
+const archiveDetailsHistorique = computed(() => store.archiveDetailsHistorique)
 const currentRole = computed(() => store.currentRole)
 const roleOptions = computed(() => store.roles)
 
@@ -97,6 +109,16 @@ const onFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement
   uploadFiles.value = target.files ? Array.from(target.files) : []
 }
+const onDossierFileChange = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const incoming = target.files ? Array.from(target.files) : []
+  const maxBytes = 10 * 1024 * 1024
+  const tooLarge = incoming.filter(f => f.size > maxBytes)
+  if (tooLarge.length) {
+    addToast('error', `Fichier(s) trop volumineux (max 10 Mo) : ${tooLarge.map(f => f.name).join(', ')}`)
+  }
+  newDossierFiles.value = incoming.filter(f => f.size <= maxBytes)
+}
 const doUpload = async () => {
   if (!uploadFiles.value.length) {
     addToast('error', 'Sélectionnez au moins un fichier avant upload.')
@@ -108,8 +130,9 @@ const doUpload = async () => {
     modalOpen.value = false
     uploadFiles.value = []
     uploadComment.value = ''
-  } catch {
-    addToast('error', 'Upload impossible. Vérifiez le backend/MinIO.')
+  } catch (err: any) {
+    const errorMsg = err?.response?.data?.message || err?.message || 'Erreur inconnue'
+    addToast('error', `Upload impossible: ${errorMsg}`)
   }
 }
 const submitDecision = async () => {
@@ -213,6 +236,72 @@ const submitRoleChange = async () => {
     addToast('error', err?.response?.data?.message || 'Changement de rôle impossible côté backend')
   }
 }
+
+const submitCreateDossier = async () => {
+  const form = newDossierForm.value
+  
+  // Validation
+  if (!form.objet?.trim()) {
+    addToast('error', 'L\'objet du dossier est requis')
+    return
+  }
+  if (!form.expediteur?.trim()) {
+    addToast('error', 'L\'expéditeur est requis')
+    return
+  }
+
+  try {
+    const payload = {
+      typeCourrier: form.type,
+      dateReception: form.dateReception,
+      destinataireExterne: form.expediteur,
+      titre: form.objet,
+      sujet: form.objet,
+      serviceCible: form.serviceCible,
+      priorite: form.priorite.toUpperCase().replace(' ', '_'),
+      description: form.remarques,
+      statut: 'RECU'
+    }
+    
+    const newDossier = await store.createDossier(payload)
+    
+    // Upload des fichiers si présents
+    if (newDossierFiles.value.length > 0 && newDossier?.id) {
+      try {
+        await store.uploadDossierDocuments(newDossier.id, newDossierFiles.value, 'original')
+        addToast('success', `Dossier créé et ${newDossierFiles.value.length} document(s) uploadé(s) avec succès !`)
+      } catch (uploadErr: any) {
+        const errorMsg = uploadErr?.response?.data?.message || uploadErr?.message || 'Erreur inconnue'
+        addToast('warning', `Dossier créé mais upload échoué: ${errorMsg}`)
+      }
+    } else {
+      addToast('success', `Dossier créé avec succès ! Workflow démarré.`)
+    }
+    
+    // Réinitialise le formulaire
+    newDossierForm.value = {
+      type: 'Entrant',
+      dateReception: new Date().toISOString().split('T')[0],
+      expediteur: '',
+      objet: '',
+      serviceCible: 'Direction Générale',
+      priorite: 'Normal',
+      remarques: ''
+    }
+    newDossierFiles.value = []
+    
+    modalOpen.value = false
+    
+    // Sélectionne le nouveau dossier et recharge ses documents
+    if (newDossier?.id) {
+      store.selectedDossier = newDossier
+      await store.loadSelectedDossierDocuments(newDossier.id)
+    }
+  } catch (err: any) {
+    console.error('createDossier error:', err)
+    addToast('error', err?.response?.data?.message || err?.message || 'Erreur lors de la création du dossier')
+  }
+}
 </script>
 
 <template>
@@ -227,12 +316,12 @@ const submitRoleChange = async () => {
         <div class="modal-body">
           <div class="form-grid form-2" style="gap:14px">
             <div class="form-group"><label class="form-label">Type</label>
-              <select class="form-select"><option>Entrant</option><option>Sortant</option><option>Interne</option></select></div>
-            <div class="form-group"><label class="form-label">Date réception</label><input type="date" class="form-input" :value="todayISO"></div>
-            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Expéditeur</label><input type="text" class="form-input" placeholder="Nom / Organisme"></div>
-            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Objet</label><input type="text" class="form-input" placeholder="Objet du dossier..."></div>
+              <select class="form-select" v-model="newDossierForm.type"><option>Entrant</option><option>Sortant</option><option>Interne</option></select></div>
+            <div class="form-group"><label class="form-label">Date réception</label><input type="date" class="form-input" v-model="newDossierForm.dateReception"></div>
+            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Expéditeur</label><input type="text" class="form-input" placeholder="Nom / Organisme" v-model="newDossierForm.expediteur"></div>
+            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Objet</label><input type="text" class="form-input" placeholder="Objet du dossier..." v-model="newDossierForm.objet"></div>
             <div class="form-group"><label class="form-label">Service destinataire</label>
-              <select class="form-select">
+              <select class="form-select" v-model="newDossierForm.serviceCible">
                 <option>Direction Générale</option>
                 <option>Service RH</option>
                 <option>Service Juridique</option>
@@ -240,13 +329,26 @@ const submitRoleChange = async () => {
                 <option>Service Financier</option>
               </select></div>
             <div class="form-group"><label class="form-label">Priorité</label>
-              <select class="form-select"><option>Normal</option><option>Urgent</option><option>Très urgent</option></select></div>
-            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Remarques</label><textarea class="form-textarea" placeholder="..."></textarea></div>
+              <select class="form-select" v-model="newDossierForm.priorite"><option>Normal</option><option>Urgent</option><option>Très urgent</option></select></div>
+            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Remarques</label><textarea class="form-textarea" placeholder="..." v-model="newDossierForm.remarques"></textarea></div>
+            <!-- UPLOAD DOCUMENTS -->
+            <div class="form-group" style="grid-column:1/-1">
+              <label class="form-label">Documents à joindre (optionnel)</label>
+              <div style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;background:var(--bg);margin-top:8px">
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" style="width:32px;height:32px;margin:0 auto 8px;display:block"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div style="font-size:12px;font-weight:600;margin-bottom:4px">Déposez vos fichiers ici</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:10px">PDF, JPG, PNG — Max 10 Mo par fichier</div>
+                <input type="file" multiple @change="onDossierFileChange" style="font-size:12px">
+              </div>
+              <div v-if="newDossierFiles.length" style="margin-top:8px;font-size:11px;color:var(--muted)">
+                <strong style="color:var(--ink)">{{newDossierFiles.length}}</strong> fichier(s) sélectionné(s)
+              </div>
+            </div>
           </div>
         </div>
         <div class="modal-foot">
           <button class="btn btn-outline" @click="modalOpen=false">Annuler</button>
-          <button class="btn btn-primary" @click="modalOpen=false;addToast('success','Dossier créé ! Workflow démarré automatiquement.')">
+          <button class="btn btn-primary" @click="submitCreateDossier">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
             Créer & démarrer
           </button>
@@ -392,7 +494,7 @@ const submitRoleChange = async () => {
     <!-- ARCHIVE DETAILS (CONSULTATION) -->
     <template v-if="activeModal==='archiveDetails'">
       <div class="modal-head">
-        <div class="modal-title">Documents du dossier</div>
+        <div class="modal-title">Consultation du dossier</div>
         <button class="modal-close" @click="modalOpen=false">✕</button>
       </div>
       <div class="modal-body">
@@ -418,6 +520,13 @@ const submitRoleChange = async () => {
             :chrome="false"
             @open="openDoc"
             @delete="deleteDoc"
+          />
+
+          <DossierCommentsSection
+            :description="archiveDetailsDossier?.description || ''"
+            :entries="archiveDetailsHistorique"
+            :loading="archiveDetailsLoading"
+            :chrome="false"
           />
         </template>
       </div>

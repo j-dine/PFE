@@ -159,9 +159,11 @@ public class WorkflowController {
 
     private String expectedCandidateGroupForRoles(Set<String> roles) {
         if (roles.contains("ROLE_AGENT_BUREAU_ORDRE")) return "BO";
-        if (roles.contains("ROLE_AGENT_SERVICE")) return "SERVICE";
-        if (roles.contains("ROLE_RESPONSABLE")) return "RESPONSABLE";
         if (roles.contains("ROLE_AGENT_FINANCIER")) return "FINANCIER";
+        if (roles.contains("ROLE_DG")) return "DG";
+        if (roles.contains("ROLE_RH")) return "RH";
+        if (roles.contains("ROLE_TECHNIQUE")) return "TECHNIQUE";
+        if (roles.contains("ROLE_JURIDIQUE")) return "JURIDIQUE";
         return null;
     }
 }

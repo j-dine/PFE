@@ -29,6 +29,17 @@ export interface DossierApi {
   locked?: boolean
 }
 
+export interface HistoriqueApi {
+  id?: number
+  action?: string
+  effectuePar?: string
+  commentaire?: string
+  fromStatut?: string
+  toStatut?: string
+  actorRole?: string
+  dateAction?: string
+}
+
 export const dossierService = {
   async list() {
     const { data } = await api.get<DossierApi[]>('/api/dossiers')
@@ -36,6 +47,10 @@ export const dossierService = {
   },
   async getById(id: number | string) {
     const { data } = await api.get<DossierApi>(`/api/dossiers/${id}`)
+    return data
+  },
+  async getHistorique(id: number | string) {
+    const { data } = await api.get<HistoriqueApi[]>(`/api/dossiers/${id}/historique`)
     return data
   },
   async listByStatut(statut: string) {
@@ -75,15 +90,21 @@ export const dossierService = {
     return data
   },
   async uploadDocument(dossierId: number | string, file: File, metadata?: { type?: string; commentaire?: string }) {
+    const maxBytes = 10 * 1024 * 1024
+    if (file.size > maxBytes) {
+      throw new Error(`Fichier trop volumineux (${(file.size / (1024 * 1024)).toFixed(1)} Mo). Maximum : 10 Mo.`)
+    }
+
     const formData = new FormData()
     formData.append('file', file)
     // On passe dossierId et type en query params car le controller utilise @RequestParam
+    // Note: Ne pas définir Content-Type pour FormData, Axios le gérera automatiquement avec la bonne boundary
     const { data } = await api.post(`/api/documents/upload`, formData, {
       params: {
         dossierId,
         type: metadata?.type || 'original',
       },
-      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
     })
     return data
   },

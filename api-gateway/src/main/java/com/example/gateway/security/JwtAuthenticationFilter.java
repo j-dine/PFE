@@ -129,9 +129,9 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
                 return true;
             }
 
-            // Patch = BO/Service/Resp/Admin
+            // Patch = BO/DG/RH/Technique/Juridique/Admin
             if (HttpMethod.PATCH.equals(method)) {
-                return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_BUREAU_ORDRE", "ROLE_AGENT_SERVICE", "ROLE_RESPONSABLE");
+                return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_BUREAU_ORDRE", "ROLE_DG", "ROLE_RH", "ROLE_TECHNIQUE", "ROLE_JURIDIQUE");
             }
 
             // Update statut = any role participating in workflow
@@ -139,9 +139,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
                 return hasAnyRole(roles,
                         "ROLE_ADMIN",
                         "ROLE_AGENT_BUREAU_ORDRE",
-                        "ROLE_AGENT_SERVICE",
-                        "ROLE_RESPONSABLE",
-                        "ROLE_AGENT_FINANCIER");
+                        "ROLE_AGENT_FINANCIER",
+                        "ROLE_DG", "ROLE_RH", "ROLE_TECHNIQUE", "ROLE_JURIDIQUE");
             }
 
             // Delete dossier = admin only
@@ -153,22 +152,23 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return false;
         }
 
-        // Documents: upload/delete restricted to BO/Admin, read allowed.
+        // Documents: upload allowed for any authenticated user; delete restricted to BO/Admin.
         if (path.startsWith("/api/documents")) {
             if (HttpMethod.GET.equals(method)) return true;
-            if (HttpMethod.POST.equals(method) || HttpMethod.DELETE.equals(method)) {
+            if (HttpMethod.POST.equals(method)) return true; // Any authenticated workflow role can upload
+            if (HttpMethod.DELETE.equals(method)) {
                 return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_BUREAU_ORDRE");
             }
             return false;
         }
 
-        // Paiements: financier/admin write, resp can read/create (current UI), others denied.
+        // Paiements: financier/admin write, others read-only.
         if (path.startsWith("/api/paiements")) {
             if (HttpMethod.GET.equals(method) || HttpMethod.HEAD.equals(method)) {
-                return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_FINANCIER", "ROLE_RESPONSABLE");
+                return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_FINANCIER", "ROLE_AGENT_BUREAU_ORDRE");
             }
             if (HttpMethod.POST.equals(method)) {
-                return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_FINANCIER", "ROLE_RESPONSABLE");
+                return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_FINANCIER");
             }
             if (HttpMethod.PATCH.equals(method) || HttpMethod.DELETE.equals(method)) {
                 return hasAnyRole(roles, "ROLE_ADMIN", "ROLE_AGENT_FINANCIER");
@@ -212,9 +212,11 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     private String expectedCandidateGroupForRoles(Set<String> roles) {
         if (roles == null) return null;
         if (roles.contains("ROLE_AGENT_BUREAU_ORDRE")) return "BO";
-        if (roles.contains("ROLE_AGENT_SERVICE")) return "SERVICE";
-        if (roles.contains("ROLE_RESPONSABLE")) return "RESPONSABLE";
         if (roles.contains("ROLE_AGENT_FINANCIER")) return "FINANCIER";
+        if (roles.contains("ROLE_DG")) return "DG";
+        if (roles.contains("ROLE_RH")) return "RH";
+        if (roles.contains("ROLE_TECHNIQUE")) return "TECHNIQUE";
+        if (roles.contains("ROLE_JURIDIQUE")) return "JURIDIQUE";
         return null;
     }
 

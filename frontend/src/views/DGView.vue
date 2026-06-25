@@ -8,6 +8,7 @@ const store = useAppStore()
 const selectedDossier = ref<any>(null)
 const prio = ref('Normal')
 const decision = ref('Approuvé')
+const requiresPayment = ref(false)
 const commentaire = ref('')
 
 const reportForm = reactive({
@@ -15,19 +16,17 @@ const reportForm = reactive({
   to: '2026-05-29',
 })
 
-const wfSteps = ['Réception', 'Enregistrement', 'Traitement', 'Validation', 'Paiement', 'Archivage']
+const wfSteps = computed(() => store.wfSteps)
 
-const dossiersAll = ref([
-  { id: 1, ref: 'CO-2026-0847', objet: 'Demande de subvention investissement', expediteur: 'Commune de Tlemcen', service: 'Serv. Financier', prio: 'Urgent' },
-  { id: 2, ref: 'CO-2026-0843', objet: 'Note de service n°12 — Congés annuels', expediteur: 'Direction RH', service: 'Serv. RH', prio: 'Normal' },
-  { id: 3, ref: 'CO-2026-0839', objet: 'Contrat prestation nettoyage bureaux', expediteur: 'ProNet SARL', service: 'Serv. Juridique', prio: 'Normal' },
-  { id: 4, ref: 'CO-2026-0835', objet: 'Rapport audit interne Q1 2026', expediteur: 'Direction Contrôle', service: 'Serv. Technique', prio: 'Urgent' },
-])
+const dossiersAll = computed(() => {
+  const taskDossierIds = store.workflowTasks.map((t: any) => String(t.dossierId))
+  return store.dossiers.filter((d: any) => taskDossierIds.includes(String(d.id)))
+})
 
 // Watcher to automatically select the first dossier if none is selected
 watch(dossiersAll, (newVal) => {
   if (newVal.length > 0) {
-    if (!selectedDossier.value || !newVal.some(d => d.id === selectedDossier.value.id)) {
+    if (!selectedDossier.value || !newVal.some((d: any) => d.id === selectedDossier.value.id)) {
       selectedDossier.value = newVal[0]
     }
   } else {
@@ -50,24 +49,47 @@ const page = computed({
 })
 
 // Methods
-const valider = (d: any) => {
-  dossiersAll.value = dossiersAll.value.filter((item: any) => item.id !== d.id)
-  toast('success', d.ref + ' validé !')
+const mapDecision = (label: string): 'APPROUVE' | 'REJETE' | 'COMPLEMENT' => {
+  const v = String(label || '').toLowerCase()
+  if (v.includes('rejet')) return 'REJETE'
+  if (v.includes('compl')) return 'COMPLEMENT'
+  return 'APPROUVE'
 }
 
-const rejeter = (d: any) => {
-  dossiersAll.value = dossiersAll.value.filter((item: any) => item.id !== d.id)
-  toast('info', d.ref + ' rejeté')
+const valider = async (d: any) => {
+  try {
+    await store.completeValidationWorkflow(d.id, 'APPROUVE', false, '')
+    toast('success', d.numero + ' approuvé — transmission archivage ou paiement')
+  } catch(e) {
+    toast('error', 'Erreur lors de la validation')
+  }
 }
 
-const validerEtTransmettre = () => {
+const rejeter = async (d: any) => {
+  try {
+    await store.completeValidationWorkflow(d.id, 'REJETE', false, '')
+    toast('info', d.numero + ' rejeté')
+  } catch(e) {
+    toast('error', 'Erreur lors du rejet')
+  }
+}
+
+const validerEtTransmettre = async () => {
   if (selectedDossier.value) {
-    const ref = selectedDossier.value.ref
-    dossiersAll.value = dossiersAll.value.filter((item: any) => item.id !== selectedDossier.value.id)
-    toast('success', `${ref} traité avec succès`)
-    selectedDossier.value = null
-  } else {
-    toast('success', 'Dossier traité avec succès')
+    const refNum = selectedDossier.value.numero
+    try {
+      const dgDecision = mapDecision(decision.value)
+      await store.completeValidationWorkflow(
+        selectedDossier.value.id,
+        dgDecision,
+        dgDecision === 'APPROUVE' && requiresPayment.value,
+        commentaire.value,
+      )
+      toast('success', `${refNum} — décision DG enregistrée`)
+      selectedDossier.value = null
+    } catch(e) {
+      toast('error', 'Erreur lors de la validation hiérarchique')
+    }
   }
   page.value = 'dashboard'
 }
@@ -78,6 +100,15 @@ const telechargerRapport = () => {
 
 const toast = (type: string, msg: string) => {
   store.addToast(type, msg)
+}
+
+const openDocs = (d: any) => {
+  const id = d?.id
+  if (!id) {
+    toast('error', 'Dossier introuvable pour consulter les documents')
+    return
+  }
+  store.openArchiveDetails(id)
 }
 </script>
 
@@ -96,12 +127,12 @@ const toast = (type: string, msg: string) => {
 
     <div class="content">
       <div class="workflow-bar">
-        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: i < 3, active: i === 3 }">
+        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: s.done, active: s.active }">
           <div class="wf-circle">
-            <span v-if="i < 3">✓</span>
+            <span v-if="s.done">✓</span>
             <span v-else>{{ i + 1 }}</span>
           </div>
-          <div class="wf-label">{{ s }}</div>
+          <div class="wf-label">{{ s.label }}</div>
         </div>
       </div>
 
@@ -121,7 +152,7 @@ const toast = (type: string, msg: string) => {
             <div class="stat-lbl">Validés ce mois</div>
           </div>
           <div class="stat-card red">
-            <div class="stat-val" style="color: var(--red)">{{ dossiersAll.filter(d => d.prio === 'Urgent').length }}</div>
+            <div class="stat-val" style="color: var(--red)">{{ dossiersAll.filter((d: any) => d.urgent).length }}</div>
             <div class="stat-lbl">Urgents en attente</div>
           </div>
           <div class="stat-card amber">
@@ -152,18 +183,19 @@ const toast = (type: string, msg: string) => {
             </thead>
             <tbody>
               <tr v-for="d in dossiersAll" :key="d.id">
-                <td><span class="td-ref">{{ d.ref }}</span></td>
+                <td><span class="td-ref">{{ d.numero }}</span></td>
                 <td>
                   <div class="td-obj">{{ d.objet }}</div>
                   <div class="td-sub">{{ d.expediteur }}</div>
                 </td>
                 <td style="font-size: 12px; color: var(--muted)">{{ d.service }}</td>
-                <td><span class="badge" :class="d.prio === 'Urgent' ? 'b-urgent' : 'b-new'">{{ d.prio }}</span></td>
+                <td><span class="badge" :class="d.urgent ? 'b-urgent' : 'b-new'">{{ d.priorite || (d.urgent ? 'Urgent' : 'Normal') }}</span></td>
                 <td><span class="badge b-pending">En attente</span></td>
                 <td>
                   <div style="display: flex; gap: 6px">
                     <button class="btn btn-success btn-sm" @click="valider(d)">✓ Valider</button>
                     <button class="btn btn-danger-soft btn-sm" @click="rejeter(d)">✗ Rejeter</button>
+                    <button class="btn btn-outline btn-sm" @click="openDocs(d)">Consulter</button>
                   </div>
                 </td>
               </tr>
@@ -174,22 +206,29 @@ const toast = (type: string, msg: string) => {
 
       <!-- VALIDER DOSSIER -->
       <template v-if="page === 'valider'">
-        <div class="page-header"><div class="page-title">Valider un dossier</div></div>
+        <div class="page-header"><div class="page-title">Validation hiérarchique (DG)</div></div>
         <div class="card">
           <div class="card-body">
             <div class="form-grid">
               <div class="form-group">
                 <label class="form-label">Référence dossier</label>
                 <select class="form-select" v-model="selectedDossier">
-                  <option v-for="d in dossiersAll" :key="d.id" :value="d">{{ d.ref }} — {{ d.objet }}</option>
+                  <option v-for="d in dossiersAll" :key="d.id" :value="d">{{ d.numero }} — {{ d.objet }}</option>
                 </select>
               </div>
               <div class="form-group">
-                <label class="form-label">Décision</label>
+                <label class="form-label">Décision (responsable hiérarchique — DG)</label>
                 <select class="form-select" v-model="decision">
                   <option>Approuvé</option>
                   <option>Rejeté</option>
+                  <option>Demande de complément</option>
                 </select>
+              </div>
+              <div class="form-group" v-if="decision === 'Approuvé'">
+                <label class="form-label">
+                  <input type="checkbox" v-model="requiresPayment" style="margin-right:8px">
+                  Nécessite un règlement financier
+                </label>
               </div>
               <div class="form-group">
                 <label class="form-label">Commentaire</label>
@@ -205,6 +244,7 @@ const toast = (type: string, msg: string) => {
             </div>
             <div class="form-actions">
               <button class="btn btn-outline" @click="page = 'dashboard'">Annuler</button>
+              <button class="btn btn-outline" v-if="selectedDossier" @click="openDocs(selectedDossier)">Voir documents</button>
               <button class="btn btn-primary" @click="validerEtTransmettre">Valider & Transmettre</button>
             </div>
           </div>

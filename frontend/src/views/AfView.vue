@@ -1,4 +1,4 @@
-﻿﻿<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { ref } from 'vue'
 import { useAppStore } from '../stores/appStore'
@@ -11,9 +11,14 @@ const activeView = computed({
   set: (val) => { store.activeView = val }
 })
 const wfSteps = computed(() => store.wfSteps)
-// En mode Camunda, l'agent financier travaille sur les dossiers "VALIDE" (tâche Paiement).
 const dossiers = computed(() => store.dossiers)
-const dossiersARegler = computed(() => dossiers.value.filter((d: any) => String(d?.statutRaw || '').toUpperCase() === 'VALIDE'))
+// En mode Camunda, l'agent financier travaille sur la tâche UserTask_Paiement.
+const dossiersARegler = computed(() => {
+  const taskDossierIds = store.workflowTasks
+    .filter((t: any) => String(t?.taskDefinitionKey || '') === 'UserTask_Paiement')
+    .map((t: any) => String(t.dossierId))
+  return dossiers.value.filter((d: any) => taskDossierIds.includes(String(d.id)))
+})
 const afStats = computed(() => store.afStats)
 const todayISO = computed(() => store.todayISO)
 const paymentRef = ref('')
@@ -104,7 +109,7 @@ const registerPayment = async () => {
                   <td>
                     <div style="display:flex;gap:5px">
                       <button class="btn btn-success btn-sm" @click="paymentRef=String(d.numero||d.id); activeView='af-enregistrer'">Saisir</button>
-                      <button class="btn btn-outline btn-sm" @click="openDocs(d)">Docs</button>
+                      <button class="btn btn-outline btn-sm" @click="openDocs(d)">Consulter</button>
                     </div>
                   </td>
                 </tr>

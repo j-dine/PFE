@@ -42,14 +42,12 @@ const nouvelleForm = reactive({
   description: '',
 })
 
-const wfSteps = ['Réception', 'Enregistrement', 'Traitement', 'Validation', 'Paiement', 'Archivage']
+const wfSteps = computed(() => store.wfSteps)
 
-const dossiersRH = ref([
-  { id: 1, ref: 'CO-2026-0841', objet: 'Demande congé annuel — 15 jours', expediteur: 'Agent Karima Saadi', agent: 'K. Saadi', type: 'Congé', prio: 'Normal' },
-  { id: 2, ref: 'CO-2026-0837', objet: 'Demande de recrutement — Ingénieur Réseau', expediteur: 'Service Technique', agent: 'Serv. Technique', type: 'Recrutement', prio: 'Urgent' },
-  { id: 3, ref: 'CO-2026-0833', objet: 'Formation Spring Boot — 3 agents', expediteur: 'Direction SI', agent: 'Équipe SI', type: 'Formation', prio: 'Normal' },
-  { id: 4, ref: 'CO-2026-0829', objet: 'Mutation interne — Serv. Juridique', expediteur: 'Agent B. Larbi', agent: 'B. Larbi', type: 'Mutation', prio: 'Normal' },
-])
+const dossiersRH = computed(() => {
+  const taskDossierIds = store.workflowTasks.map((t: any) => String(t.dossierId))
+  return store.dossiers.filter((d: any) => taskDossierIds.includes(String(d.id)))
+})
 
 // Sync first dossier as default selection
 watch(dossiersRH, (newVal) => {
@@ -70,9 +68,23 @@ const openDossier = (d: any) => {
   store.addToast('info', `Dossier RH ${d.ref} ouvert`)
 }
 
-const submitTraitement = () => {
-  page.value = 'dashboard'
-  store.addToast('success', 'Dossier RH traité — Transmis à validation')
+const submitTraitement = async () => {
+  if (traitementForm.dossier) {
+    try {
+      const note = [
+        `Type: ${traitementForm.typeDemande}`,
+        `Agent: ${traitementForm.agent}`,
+        `Matricule: ${traitementForm.matricule}`,
+        `Statut analyse: ${traitementForm.statut}`,
+        traitementForm.note ? `Note: ${traitementForm.note}` : '',
+      ].filter(Boolean).join('\n')
+      await store.completeTraitementWorkflow(traitementForm.dossier.id, note, traitementForm.statut)
+      store.addToast('success', 'Dossier transmis au DG pour validation')
+      page.value = 'dashboard'
+    } catch(e) {
+      store.addToast('error', 'Erreur lors du traitement')
+    }
+  }
 }
 
 const submitNouvelleDemande = () => {
@@ -81,6 +93,15 @@ const submitNouvelleDemande = () => {
 }
 
 const addToast = (type: string, msg: string) => store.addToast(type, msg)
+
+const openDocs = (d: any) => {
+  const id = d?.id
+  if (!id) {
+    addToast('error', 'Dossier introuvable pour consulter les documents')
+    return
+  }
+  store.openArchiveDetails(id)
+}
 </script>
 
 <template>
@@ -99,12 +120,12 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
     <div class="content">
       <!-- Workflow bar -->
       <div class="workflow-bar">
-        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: i < 2, active: i === 2 }">
+        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: s.done, active: s.active }">
           <div class="wf-circle">
-            <span v-if="i < 2">✓</span>
+            <span v-if="s.done">✓</span>
             <span v-else>{{ i + 1 }}</span>
           </div>
-          <div class="wf-label">{{ s }}</div>
+          <div class="wf-label">{{ s.label }}</div>
         </div>
       </div>
 
@@ -128,7 +149,7 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
             <div class="stat-lbl">Traités</div>
           </div>
           <div class="stat-card red">
-            <div class="stat-val" style="color: var(--red)">{{ dossiersRH.filter(d => d.prio === 'Urgent').length }}</div>
+            <div class="stat-val" style="color: var(--red)">{{ dossiersRH.filter((d: any) => d.urgent).length }}</div>
             <div class="stat-lbl">Urgents</div>
           </div>
         </div>
@@ -154,18 +175,18 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
             </thead>
             <tbody>
               <tr v-for="d in dossiersRH" :key="d.id">
-                <td><span class="td-ref">{{ d.ref }}</span></td>
+                <td><span class="td-ref">{{ d.numero }}</span></td>
                 <td>
                   <div class="td-obj">{{ d.objet }}</div>
                   <div class="td-sub">{{ d.expediteur }}</div>
                 </td>
-                <td style="font-size: 12px">{{ d.agent }}</td>
-                <td><span class="badge b-type">{{ d.type }}</span></td>
-                <td><span class="badge" :class="d.prio === 'Urgent' ? 'b-urgent' : 'b-pending'">{{ d.prio }}</span></td>
+                <td style="font-size: 12px">{{ d.service }}</td>
+                <td><span class="badge b-type">RH</span></td>
+                <td><span class="badge" :class="d.urgent ? 'b-urgent' : 'b-pending'">{{ d.priorite || (d.urgent ? 'Urgent' : 'Normal') }}</span></td>
                 <td>
                   <div style="display: flex; gap: 6px">
                     <button class="btn btn-amber-soft btn-sm" @click="openDossier(d)">Traiter</button>
-                    <button class="btn btn-outline btn-sm" @click="addToast('info', 'Consultation du dossier ' + d.ref)">Voir</button>
+                    <button class="btn btn-outline btn-sm" @click="openDocs(d)">Consulter</button>
                   </div>
                 </td>
               </tr>
@@ -187,7 +208,7 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
                 <div class="form-group">
                   <label class="form-label">Dossier concerné<span class="form-required">*</span></label>
                   <select class="form-select" v-model="traitementForm.dossier">
-                    <option v-for="d in dossiersRH" :key="d.id" :value="d">{{ d.ref }} — {{ d.objet }}</option>
+                    <option v-for="d in dossiersRH" :key="d.id" :value="d">{{ d.numero }} — {{ d.objet }}</option>
                   </select>
                 </div>
                 <div class="form-group">
@@ -229,6 +250,7 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
               </div>
               <div class="form-actions">
                 <button class="btn btn-outline" @click="page = 'dashboard'">Annuler</button>
+                <button class="btn btn-outline" v-if="traitementForm.dossier" @click="openDocs(traitementForm.dossier)">Voir documents</button>
                 <button class="btn btn-primary" @click="submitTraitement">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                   Transmettre à validation

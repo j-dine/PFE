@@ -45,13 +45,12 @@ const demandeForm = reactive({
   priorite: 'Normal',
 })
 
-const wfSteps = ['Réception', 'Enregistrement', 'Traitement', 'Validation', 'Paiement', 'Archivage']
+const wfSteps = computed(() => store.wfSteps)
 
-const dossiersTech = ref([
-  { id: 1, ref: 'CO-2026-0849', objet: "Étude d'impact réseau", expediteur: 'Direction SI', domaine: 'Informatique', prio: 'Urgent', delai: '05/06/2026' },
-  { id: 2, ref: 'CO-2026-0842', objet: 'Maintenance climatiseurs bureaux', expediteur: 'Service Logistique', domaine: 'Maintenance', prio: 'Normal', delai: '10/06/2026' },
-  { id: 3, ref: 'CO-2026-0838', objet: 'Inspection sécurité chantier', expediteur: 'Direction Travaux', domaine: 'Travaux & BTP', prio: 'Urgent', delai: '07/06/2026' },
-])
+const dossiersTech = computed(() => {
+  const taskDossierIds = store.workflowTasks.map((t: any) => String(t.dossierId))
+  return store.dossiers.filter((d: any) => taskDossierIds.includes(String(d.id)))
+})
 
 // Default dossier selection
 watch(dossiersTech, (newVal) => {
@@ -68,9 +67,17 @@ const openRapport = (d: any) => {
   store.addToast('info', `Dossier technique ${d.ref} ouvert`)
 }
 
-const submitRapport = () => {
-  page.value = 'dashboard'
-  store.addToast('success', 'Rapport technique soumis — Transmis à validation')
+const submitRapport = async () => {
+  if (rapportForm.dossier) {
+    try {
+      const note = `Constatations: ${rapportForm.constatations}\nRecommandations: ${rapportForm.recommandations}\nEstimation: ${rapportForm.estimation}\nDélai: ${rapportForm.delai}`
+      await store.completeTraitementWorkflow(rapportForm.dossier.id, note, rapportForm.avis)
+      store.addToast('success', 'Rapport transmis au DG pour validation')
+      page.value = 'dashboard'
+    } catch(e) {
+      store.addToast('error', 'Erreur lors du traitement')
+    }
+  }
 }
 
 const submitDemande = () => {
@@ -79,6 +86,15 @@ const submitDemande = () => {
 }
 
 const addToast = (type: string, msg: string) => store.addToast(type, msg)
+
+const openDocs = (d: any) => {
+  const id = d?.id
+  if (!id) {
+    addToast('error', 'Dossier introuvable pour consulter les documents')
+    return
+  }
+  store.openArchiveDetails(id)
+}
 </script>
 
 <template>
@@ -97,12 +113,12 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
     <div class="content">
       <!-- Workflow bar -->
       <div class="workflow-bar">
-        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: i < 2, active: i === 2 }">
+        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: s.done, active: s.active }">
           <div class="wf-circle">
-            <span v-if="i < 2">✓</span>
+            <span v-if="s.done">✓</span>
             <span v-else>{{ i + 1 }}</span>
           </div>
-          <div class="wf-label">{{ s }}</div>
+          <div class="wf-label">{{ s.label }}</div>
         </div>
       </div>
 
@@ -126,7 +142,7 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
             <div class="stat-lbl">Rapports rendus</div>
           </div>
           <div class="stat-card red">
-            <div class="stat-val" style="color: var(--red)">{{ dossiersTech.filter(d => d.prio === 'Urgent').length }}</div>
+            <div class="stat-val" style="color: var(--red)">{{ dossiersTech.filter((d: any) => d.urgent).length }}</div>
             <div class="stat-lbl">Urgents</div>
           </div>
         </div>
@@ -153,18 +169,18 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
             </thead>
             <tbody>
               <tr v-for="d in dossiersTech" :key="d.id">
-                <td><span class="td-ref">{{ d.ref }}</span></td>
+                <td><span class="td-ref">{{ d.numero }}</span></td>
                 <td>
                   <div class="td-obj">{{ d.objet }}</div>
                   <div class="td-sub">{{ d.expediteur }}</div>
                 </td>
-                <td><span class="badge b-domain">{{ d.domaine }}</span></td>
-                <td><span class="badge" :class="d.prio === 'Urgent' ? 'b-urgent' : 'b-pending'">{{ d.prio }}</span></td>
-                <td style="font-size: 11px; color: var(--red); font-weight: 600">{{ d.delai }}</td>
+                <td><span class="badge b-domain">Technique</span></td>
+                <td><span class="badge" :class="d.urgent ? 'b-urgent' : 'b-pending'">{{ d.priorite || (d.urgent ? 'Urgent' : 'Normal') }}</span></td>
+                <td style="font-size: 11px; color: var(--red); font-weight: 600">{{ d.deadline || d.delai }}</td>
                 <td>
                   <div style="display: flex; gap: 6px">
                     <button class="btn btn-primary btn-sm" @click="openRapport(d)">Traiter</button>
-                    <button class="btn btn-outline btn-sm" @click="addToast('info', 'Consultation du dossier ' + d.ref)">Voir</button>
+                    <button class="btn btn-outline btn-sm" @click="openDocs(d)">Consulter</button>
                   </div>
                 </td>
               </tr>
@@ -187,7 +203,7 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
               <div class="form-group">
                 <label class="form-label">Dossier concerné<span class="form-required">*</span></label>
                 <select class="form-select" v-model="rapportForm.dossier">
-                  <option v-for="d in dossiersTech" :key="d.id" :value="d">{{ d.ref }} — {{ d.objet }}</option>
+                  <option v-for="d in dossiersTech" :key="d.id" :value="d">{{ d.numero }} — {{ d.objet }}</option>
                 </select>
               </div>
               <div class="form-group">
@@ -260,6 +276,7 @@ const addToast = (type: string, msg: string) => store.addToast(type, msg)
             </div>
             <div class="form-actions">
               <button class="btn btn-outline" @click="page = 'dashboard'">Annuler</button>
+              <button class="btn btn-outline" v-if="rapportForm.dossier" @click="openDocs(rapportForm.dossier)">Voir documents</button>
               <button class="btn btn-amber-soft" @click="addToast('info', 'Rapport sauvegardé en brouillon')">Brouillon</button>
               <button class="btn btn-primary" @click="submitRapport">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>

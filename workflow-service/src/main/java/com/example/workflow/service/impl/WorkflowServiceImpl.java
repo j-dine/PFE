@@ -22,7 +22,9 @@ public class WorkflowServiceImpl implements WorkflowService {
     public String startDossierProcess(Long dossierId) {
         Map<String, Object> variables = new HashMap<>();
         variables.put("dossierId", dossierId);
-        variables.put("isValidated", true);
+        variables.put("requiresPayment", false);
+        variables.put("validationDecision", "");
+        variables.put("isValidated", false);
         ProcessInstance instance = runtimeService
                 .startProcessInstanceByKey(DEFAULT_PROCESS_KEY, variables);
         return instance.getId();
@@ -36,7 +38,9 @@ public class WorkflowServiceImpl implements WorkflowService {
 
         Map<String, Object> variables = new HashMap<>();
         variables.put("dossierId", request.getDossierId());
-        variables.put("isValidated", request.getIsValidated() != null ? request.getIsValidated() : true);
+        variables.put("requiresPayment", false);
+        variables.put("validationDecision", "");
+        variables.put("isValidated", request.getIsValidated() != null ? request.getIsValidated() : false);
 
         if (request.getCommentaire() != null) {
             variables.put("commentaire", request.getCommentaire());

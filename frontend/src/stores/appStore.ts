@@ -1,10 +1,11 @@
-﻿﻿﻿﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { authService } from '../services/authService'
 import { dossierService } from '../services/dossierService'
 import { userService } from '../services/userService'
 import { paiementService } from '../services/paiementService'
 import { documentService } from '../services/documentService'
 import { workflowService } from '../services/workflowService'
+import { notificationService } from '../services/notificationService'
 import { setAuthToken } from '../services/api'
 import axios from 'axios'
 
@@ -38,14 +39,16 @@ export const useAppStore = defineStore('app', {
       wfSteps: [
         { label: 'Réception', done: true, active: false },
         { label: 'Enregistrement', done: true, active: false },
-        { label: 'Traitement', done: false, active: true },
-        { label: 'Validation', done: false, active: false },
+        { label: 'Traitement', done: false, active: false },
+        { label: 'Validation DG', done: false, active: true },
         { label: 'Paiement', done: false, active: false },
         { label: 'Archivage', done: false, active: false },
       ],
       dossiers: [] as any[],
       archives: [] as any[],
       paiements: [] as any[],
+      notifications: [] as any[],
+      announcedNotificationIds: [] as string[],
       workflowTasks: [] as any[],
       docsCountByDossierId: {} as Record<string, number>,
       archiveDetailsLoading: false,
@@ -53,6 +56,9 @@ export const useAppStore = defineStore('app', {
       archiveDetailsDocuments: [] as any[],
       selectedDossierDocuments: [] as any[],
       selectedDossierDocsLoading: false,
+      selectedDossierHistorique: [] as any[],
+      selectedDossierHistoriqueLoading: false,
+      archiveDetailsHistorique: [] as any[],
       auditLogs: [] as any[],
       adminUsers: [] as any[],
       decisionsResp: [] as any[],
@@ -79,8 +85,6 @@ export const useAppStore = defineStore('app', {
       activities: [] as any[],
       roles: [
         { key: 'abo', label: 'Agent Bureau d\'Ordre' },
-        { key: 'as', label: 'Agent de Service' },
-        { key: 'resp', label: 'Responsable' },
         { key: 'af', label: 'Agent Financier' },
         { key: 'admin', label: 'Administrateur' },
         { key: 'dg', label: 'Directeur Général' },
@@ -90,8 +94,6 @@ export const useAppStore = defineStore('app', {
       ],
       usersMap: {
         abo: { name: 'Jamal', init: 'AB', color: '#1d4ed8', roleLabel: 'Agent Bureau d\'Ordre' },
-        as: { name: 'Karim', init: 'KS', color: '#6366f1', roleLabel: 'Agent de Service' },
-        resp: { name: 'Aziz', init: 'MH', color: '#0369a1', roleLabel: 'Responsable  Chef de Service' },
         af: { name: 'Bilal ', init: 'BL', color: '#15803d', roleLabel: 'Agent Financier' },
         admin: { name: 'Fatima', init: 'FM', color: '#dc2626', roleLabel: 'Administrateur Système' },
         dg: { name: 'Dr. Mourad Hamdi', init: 'MH', color: '#1d4ed8', roleLabel: 'Directeur Général' },
@@ -113,23 +115,6 @@ export const useAppStore = defineStore('app', {
               { key: 'abo-uploader', label: 'Uploader document', icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/>' },
               { key: 'abo-consulter', label: 'Consulter dossiers', icon: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' },
               { key: 'abo-archive', label: 'Consulter archives', icon: '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/>' },
-            ]
-          },
-        ],
-        as: [
-          {
-            title: 'Mes dossiers', items: [
-              { key: 'as-dashboard', label: 'Tableau de bord', icon: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>' },
-              { key: 'as-traiter', label: 'Traiter dossier', icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>', badge: '', badgeClass: 'amber' },
-              { key: 'as-repondre', label: 'Rédiger réponse', icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' },
-            ]
-          },
-        ],
-        resp: [
-          {
-            title: 'Validation', items: [
-              { key: 'resp-dashboard', label: 'File de validation', icon: '<path d="M9 11l3 3L22 4"/>', badge: '', badgeClass: 'amber' },
-              { key: 'resp-rapport', label: 'Générer rapport', icon: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' },
             ]
           },
         ],
@@ -190,8 +175,6 @@ export const useAppStore = defineStore('app', {
       } as Record<string, any>,
       defaultViews: {
         abo: 'abo-dashboard',
-        as: 'as-dashboard',
-        resp: 'resp-dashboard',
         af: 'af-dashboard',
         admin: 'admin-dashboard',
         dg: 'dg-dashboard',
@@ -259,26 +242,6 @@ export const useAppStore = defineStore('app', {
         urgents: state.dossiers.filter((d: any) => d.urgent).length
       }
     },
-    asStats: (state) => {
-      const assigned = state.dossiers.filter((d: any) => d.statutKey === 'enregistrement' || d.statutKey === 'traitement' || d.statutKey === 'rejete')
-      return {
-        recus: assigned.length,
-        enCours: assigned.filter((d: any) => d.statutKey === 'traitement' || d.statutKey === 'rejete').length,
-        transmis: state.dossiers.filter((d: any) => d.statutKey === 'validation').length,
-        urgents: assigned.filter((d: any) => d.urgent).length
-      }
-    },
-    respStats: (state) => {
-      const valides = state.dossiers.filter((d: any) => d.statutKey === 'paiement' || d.statutKey === 'archive').length
-      const total = state.dossiers.length || 1
-      return {
-        enAttente: state.dossiers.filter((d: any) => d.statutKey === 'validation').length,
-        validesMois: valides,
-        taux: Math.round((valides / total) * 100),
-        rejetes: state.dossiers.filter((d: any) => d.statutKey === 'rejete').length,
-        avecCommentaire: state.dossiers.filter((d: any) => d.historique?.length > 0).length
-      }
-    },
     afStats: (state) => {
       return {
         enAttente: state.paiements.filter((p: any) => !p.paid).length,
@@ -289,10 +252,15 @@ export const useAppStore = defineStore('app', {
     candidateGroupForRole: (state) => {
       const r = String(state.currentRole || '')
       if (r === 'abo') return 'BO'
-      if (r === 'as') return 'SERVICE'
-      if (r === 'resp') return 'RESPONSABLE'
       if (r === 'af') return 'FINANCIER'
+      if (r === 'dg') return 'DG'
+      if (r === 'rh') return 'RH'
+      if (r === 'technique') return 'TECHNIQUE'
+      if (r === 'juridique') return 'JURIDIQUE'
       return ''
+    },
+    unreadNotificationCount: (state) => {
+      return state.notifications.filter((n: any) => String(n?.statut || '').toUpperCase() !== 'LU').length
     },
   },
   actions: {
@@ -305,15 +273,13 @@ export const useAppStore = defineStore('app', {
       const roles = rolesArr.map((r: any) => String(r || '').toUpperCase())
       const has = (...keys: string[]) => roles.some(r => keys.some(k => r.includes(k)))
 
-      // Priorité: admin > responsable > financier > service > BO
+      // Priorité: admin > financier > DG > RH > Juridique > Technique > BO
       if (has('ADMIN', 'ADMIN_SYSTEME', 'ROLE_ADMIN')) return 'admin'
-      if (has('RESP', 'RESPONSABLE', 'RESPONSABLE_HIERARCHIQUE', 'ROLE_RESP')) return 'resp'
       if (has('FIN', 'FINANCIER', 'AGENT_FINANCIER', 'ROLE_FIN')) return 'af'
       if (has('DG', 'DIRECTION_GENERALE', 'DIRECTION GÉNÉRALE', 'DIRECTEUR_GÉNÉRAL', 'ROLE_DG')) return 'dg'
       if (has('RH', 'RESSOURCES_HUMAINES', 'ROLE_RH')) return 'rh'
       if (has('JURIDIQUE', 'ROLE_JURIDIQUE')) return 'juridique'
       if (has('TECHNIQUE', 'ROLE_TECHNIQUE')) return 'technique'
-      if (has('SERVICE', 'AGENT_SERVICE', 'ROLE_SERVICE')) return 'as'
       if (has('BUREAU', 'ORDRE', 'AGENT_BUREAU', 'AGENT_BO', 'ROLE_BO')) return 'abo'
       return 'abo'
     },
@@ -355,7 +321,8 @@ export const useAppStore = defineStore('app', {
           this.fetchDossiers(),
           this.fetchArchives(),
           this.fetchPaiements(),
-          this.fetchMyWorkflowTasks()
+          this.fetchMyWorkflowTasks(),
+          this.fetchNotifications()
         ])
         if (this.currentRole === 'admin') {
           await this.fetchUsers()
@@ -373,6 +340,43 @@ export const useAppStore = defineStore('app', {
       } catch (e) {
         console.warn('fetchMyWorkflowTasks failed:', e)
         this.workflowTasks = []
+      }
+    },
+    async fetchNotifications() {
+      try {
+        const group = (this as any).candidateGroupForRole || ''
+        if (!group) {
+          this.notifications = []
+          return
+        }
+
+        const data = await notificationService.listByDestinataire(group)
+        const list = Array.isArray(data) ? data : []
+        this.notifications = list.sort((a: any, b: any) => {
+          const ad = new Date(a?.dateEnvoi || 0).getTime()
+          const bd = new Date(b?.dateEnvoi || 0).getTime()
+          return bd - ad
+        })
+
+        const fresh = this.notifications.filter((n: any) => {
+          const id = String(n?.id || '')
+          const statut = String(n?.statut || '').toUpperCase()
+          return id && statut !== 'LU' && !this.announcedNotificationIds.includes(id)
+        })
+
+        for (const notif of fresh.slice(0, 3)) {
+          const sujet = notif?.sujet || 'Notification'
+          const message = notif?.message ? `: ${notif.message}` : ''
+          this.addToast('info', `${sujet}${message}`)
+        }
+
+        this.announcedNotificationIds = Array.from(new Set([
+          ...this.announcedNotificationIds,
+          ...fresh.map((n: any) => String(n?.id || '')).filter(Boolean),
+        ]))
+      } catch (e) {
+        console.warn('fetchNotifications failed:', e)
+        this.notifications = []
       }
     },
     async fetchWorkflowTasksByDossier(dossierId: number | string) {
@@ -395,13 +399,28 @@ export const useAppStore = defineStore('app', {
       }
       await workflowService.completeTask(String(task.id), variables || {})
       await Promise.all([this.fetchDossiers(), this.fetchArchives(), this.fetchPaiements(), this.fetchMyWorkflowTasks()])
+      try {
+        if (this.selectedDossier && String(this.selectedDossier.id) === String(dossierId)) {
+          await this.loadSelectedDossierDetails(dossierId)
+        }
+        if (
+          this.activeModal === 'archiveDetails'
+          && this.archiveDetailsDossier
+          && String(this.archiveDetailsDossier.id) === String(dossierId)
+        ) {
+          await this.loadArchiveDetails(dossierId)
+        }
+      } catch {
+        // ignore refresh errors
+      }
     },
     async completeEnregistrementWorkflow(dossierId: number | string) {
       await this.completeWorkflowTaskForDossier(dossierId, 'UserTask_Enregistrement')
     },
-    async completeTraitementWorkflow(dossierId: number | string, commentaire?: string) {
-      const vars: any = {}
+    async completeTraitementWorkflow(dossierId: number | string, commentaire?: string, recommendation?: string) {
+      const vars: Record<string, unknown> = { traitementTermine: true }
       if (commentaire) vars.commentaire = commentaire
+      if (recommendation) vars.recommendation = recommendation
       await this.completeWorkflowTaskForDossier(dossierId, 'UserTask_Traitement', vars)
       if (commentaire) {
         try {
@@ -411,8 +430,17 @@ export const useAppStore = defineStore('app', {
         }
       }
     },
-    async completeValidationWorkflow(dossierId: number | string, isValidated: boolean, commentaire?: string) {
-      const vars: any = { isValidated: !!isValidated }
+    async completeValidationWorkflow(
+      dossierId: number | string,
+      decision: 'APPROUVE' | 'REJETE' | 'COMPLEMENT',
+      requiresPayment: boolean = false,
+      commentaire?: string,
+    ) {
+      const vars: Record<string, unknown> = {
+        validationDecision: decision,
+        requiresPayment: !!requiresPayment,
+        isValidated: decision === 'APPROUVE',
+      }
       if (commentaire) vars.commentaire = commentaire
       await this.completeWorkflowTaskForDossier(dossierId, 'UserTask_Validation', vars)
       if (commentaire) {
@@ -422,6 +450,15 @@ export const useAppStore = defineStore('app', {
           console.warn('comment trace failed:', e)
         }
       }
+    },
+    /** @deprecated Utiliser completeValidationWorkflow — conservé pour compatibilité interne */
+    async completeDecisionWorkflow(dossierId: number | string, isValidated: boolean, commentaire?: string) {
+      return this.completeValidationWorkflow(
+        dossierId,
+        isValidated ? 'APPROUVE' : 'REJETE',
+        false,
+        commentaire,
+      )
     },
     async completePaiementWorkflow(dossierId: number | string, montant: number, commentaire?: string) {
       const vars: any = { montant: Number(montant) }
@@ -493,6 +530,62 @@ export const useAppStore = defineStore('app', {
       }
       return String(v)
     },
+    formatHistoriqueDate(value?: string | null) {
+      if (!value) return '-'
+      try {
+        const d = new Date(value)
+        if (!Number.isNaN(d.getTime())) {
+          return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+        }
+      } catch {
+        // ignore
+      }
+      return this.formatDateDisplay(value)
+    },
+    formatHistoriqueAction(action?: string) {
+      const key = String(action || '').toUpperCase()
+      const labels: Record<string, string> = {
+        CREATION: 'Création du dossier',
+        COMMENTAIRE: 'Commentaire',
+        CHANGEMENT_STATUT: 'Changement de statut',
+        ASSIGNATION: 'Assignation',
+        ARCHIVAGE: 'Archivage',
+        EXPEDITION: 'Expédition',
+        MISE_A_JOUR: 'Mise à jour',
+      }
+      return labels[key] || (action || 'Action')
+    },
+    mapHistoriqueForUi(raw: any) {
+      const actionKey = String(raw?.action || '').toUpperCase()
+      const isComment = actionKey === 'COMMENTAIRE'
+      return {
+        id: raw?.id,
+        action: this.formatHistoriqueAction(raw?.action),
+        user: raw?.effectuePar || 'Système',
+        date: this.formatHistoriqueDate(raw?.dateAction),
+        commentaire: raw?.commentaire || '',
+        fromStatut: raw?.fromStatut || '',
+        toStatut: raw?.toStatut || '',
+        visibilite: raw?.actorRole || '',
+        bg: isComment ? '#ede9fe' : '#dbeafe',
+        color: isComment ? '#6d28d9' : '#1d4ed8',
+        icon: isComment
+          ? '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+          : '<polyline points="20 6 9 17 4 12"/>',
+      }
+    },
+    async fetchHistoriqueByDossier(dossierId: number | string) {
+      const rows = await dossierService.getHistorique(dossierId)
+      const list = Array.isArray(rows) ? rows : []
+      return list
+        .slice()
+        .sort((a: any, b: any) => {
+          const ad = new Date(String(a?.dateAction || '')).getTime()
+          const bd = new Date(String(b?.dateAction || '')).getTime()
+          return bd - ad
+        })
+        .map((row: any) => this.mapHistoriqueForUi(row))
+    },
     async fetchArchives() {
       try {
         const apiArchives = await dossierService.listByStatut('ARCHIVE')
@@ -540,23 +633,44 @@ export const useAppStore = defineStore('app', {
       return docs
     },
     async loadSelectedDossierDocuments(dossierId: number | string) {
+      await this.loadSelectedDossierDetails(dossierId)
+    },
+    async loadSelectedDossierDetails(dossierId: number | string) {
       this.selectedDossierDocsLoading = true
+      this.selectedDossierHistoriqueLoading = true
       try {
-        const docs = await this.fetchDocumentsByDossier(dossierId)
+        const [dossier, docs, historique] = await Promise.all([
+          dossierService.getById(dossierId).catch(() => null),
+          this.fetchDocumentsByDossier(dossierId),
+          this.fetchHistoriqueByDossier(dossierId),
+        ])
         this.selectedDossierDocuments = Array.isArray(docs) ? docs : []
+        this.selectedDossierHistorique = historique
+        if (this.selectedDossier && String(this.selectedDossier.id) === String(dossierId)) {
+          this.selectedDossier = {
+            ...this.selectedDossier,
+            description: dossier?.description || this.selectedDossier.description || '',
+            historique,
+          }
+        }
       } finally {
         this.selectedDossierDocsLoading = false
+        this.selectedDossierHistoriqueLoading = false
       }
     },
     async loadArchiveDetails(dossierId: number | string) {
       this.archiveDetailsLoading = true
+      const did = String(dossierId)
       try {
-        const [dossier, docs] = await Promise.all([
+        const [dossier, docs, historique] = await Promise.all([
           dossierService.getById(dossierId),
           this.fetchDocumentsByDossier(dossierId),
+          this.fetchHistoriqueByDossier(dossierId),
         ])
+
         this.archiveDetailsDossier = dossier
         this.archiveDetailsDocuments = Array.isArray(docs) ? docs : []
+        this.archiveDetailsHistorique = historique
       } finally {
         this.archiveDetailsLoading = false
       }
@@ -724,6 +838,7 @@ export const useAppStore = defineStore('app', {
               agent: 'Agent',
               agentInit: 'AG',
               agentColor: '#6366f1',
+              description: d.description || '',
               historique: [],
             }
           })
@@ -752,8 +867,8 @@ export const useAppStore = defineStore('app', {
       if (value.includes('ENREG')) return 'enregistrement'
       if (value.includes('EN_COURS')) return 'validation'
       if (value.includes('TRAITEMENT')) return 'traitement'
-      // Dossier "VALIDE" => en attente de paiement (et non plus en validation).
-      if (value === 'VALIDE') return 'paiement'
+      // VALIDE: en attente paiement ou archivage BO.
+      if (value === 'VALIDE') return 'validation'
       if (value.includes('VALID')) return 'validation'
       if (value.includes('PAY')) return 'paiement'
       if (value.includes('ARCH')) return 'archive'
@@ -780,7 +895,8 @@ export const useAppStore = defineStore('app', {
         this.fetchDossiers(),
         this.fetchArchives(),
         this.fetchPaiements(),
-        this.fetchMyWorkflowTasks()
+        this.fetchMyWorkflowTasks(),
+        this.fetchNotifications()
       ])
       if (this.currentRole === 'admin') {
         await this.fetchUsers()
@@ -797,9 +913,11 @@ export const useAppStore = defineStore('app', {
     },
     getStatutLabel(statut: string) {
       const upper = String(statut || '').toUpperCase()
-      if (upper === 'VALIDE') return 'Validé (à payer)'
+      if (upper === 'VALIDE') return 'Validé (à archiver ou payer)'
       if (upper === 'PAYE') return 'Payé'
       if (upper === 'REJETE') return 'Rejeté'
+      if (upper === 'EN_COURS') return 'Complément demandé'
+      if (upper === 'EN_TRAITEMENT') return 'En traitement'
       const key = this.mapStatutKey(statut)
       const labels: Record<string, string> = {
         reception: 'Reception',
@@ -837,12 +955,20 @@ export const useAppStore = defineStore('app', {
     async transitionDossier(dossierId: number | string, statut: string, commentaire?: string) {
       // Mode Camunda: on complète les user tasks au lieu de changer directement le statut.
       const upper = String(statut || '').toUpperCase()
-      if (upper === 'VALIDE') {
-        await this.completeValidationWorkflow(dossierId, true, commentaire)
+      if (upper === 'VALIDE' || upper === 'APPROUVE') {
+        await this.completeValidationWorkflow(dossierId, 'APPROUVE', false, commentaire)
         return
       }
-      if (upper === 'REJETE') {
-        await this.completeValidationWorkflow(dossierId, false, commentaire)
+      if (upper === 'REJETE' || upper === 'REJET') {
+        await this.completeValidationWorkflow(dossierId, 'REJETE', false, commentaire)
+        return
+      }
+      if (upper === 'EN_COURS' || upper === 'COMPLEMENT') {
+        await this.completeValidationWorkflow(dossierId, 'COMPLEMENT', false, commentaire)
+        return
+      }
+      if (upper === 'EN_TRAITEMENT') {
+        await this.completeTraitementWorkflow(dossierId, commentaire)
         return
       }
       if (upper === 'PAYE') {
@@ -850,11 +976,6 @@ export const useAppStore = defineStore('app', {
       }
       if (upper === 'ARCHIVE') {
         await this.completeArchivageWorkflow(dossierId, commentaire)
-        return
-      }
-      if (upper === 'EN_COURS') {
-        // Ancien libellé UI utilisé par l'agent service: correspond à la complétion de la tâche "Traitement".
-        await this.completeTraitementWorkflow(dossierId, commentaire)
         return
       }
       if (upper === 'ENREGISTRE') {
@@ -869,23 +990,17 @@ export const useAppStore = defineStore('app', {
     },
     async addCommentToDossier(dossierId: number | string, commentaire: string, visibilite?: string) {
       await dossierService.comment(dossierId, { commentaire, visibilite })
+      const historique = await this.fetchHistoriqueByDossier(dossierId)
       const idx = this.dossiers.findIndex((d: any) => String(d.id) === String(dossierId))
-      if (idx === -1) return
-      const d = this.dossiers[idx]
-      const historyItem = {
-        id: Date.now(),
-        action: 'Commentaire ajouté',
-        user: this.currentUser?.name || 'Utilisateur',
-        date: new Date().toLocaleString('fr-FR'),
-        bg: '#ede9fe',
-        color: '#6d28d9',
-        icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
-        commentaire,
-        visibilite: visibilite || 'agent',
+      if (idx !== -1) {
+        this.dossiers[idx].historique = historique
       }
-      d.historique = Array.isArray(d.historique) ? [historyItem, ...d.historique] : [historyItem]
       if (this.selectedDossier && String(this.selectedDossier.id) === String(dossierId)) {
-        this.selectedDossier = d
+        this.selectedDossier = { ...this.selectedDossier, historique }
+        this.selectedDossierHistorique = historique
+      }
+      if (this.archiveDetailsDossier && String(this.archiveDetailsDossier.id) === String(dossierId)) {
+        this.archiveDetailsHistorique = historique
       }
     },
     async createDossier(payload: any) {
@@ -896,6 +1011,16 @@ export const useAppStore = defineStore('app', {
           await workflowService.start(data.id)
         } catch (e) {
           console.warn('workflow start failed:', e)
+        }
+        // Si un service destinataire est sélectionné, on complète automatiquement
+        // la tâche "Enregistrement" pour envoyer directement le dossier au service concerné.
+        const sc = String(payload?.serviceCible || '').trim()
+        if (sc && sc !== 'Non assigné' && sc !== '') {
+          try {
+            await this.completeEnregistrementWorkflow(data.id)
+          } catch (e) {
+            console.warn('auto-enregistrement failed:', e)
+          }
         }
       }
       await Promise.all([this.fetchDossiers(), this.fetchMyWorkflowTasks()])
@@ -940,9 +1065,15 @@ export const useAppStore = defineStore('app', {
         results.push(r)
       }
 
-      // Refresh document count for archive/list views (best-effort).
+      // Refresh document list and count for the current dossier.
       try {
-        await this.fetchDocumentsByDossier(dossierId)
+        const docs = await this.fetchDocumentsByDossier(dossierId)
+        if (this.selectedDossier && String(this.selectedDossier.id) === String(dossierId)) {
+          this.selectedDossierDocuments = Array.isArray(docs) ? docs : []
+        }
+        if (this.archiveDetailsDossier && String(this.archiveDetailsDossier.id) === String(dossierId)) {
+          this.archiveDetailsDocuments = Array.isArray(docs) ? docs : []
+        }
       } catch {
         // ignore
       }
@@ -1000,7 +1131,12 @@ export const useAppStore = defineStore('app', {
       // DÃ©sactivÃ©: le rÃ´le vient du backend et n'est pas sÃ©lectionnable cÃ´tÃ© UI.
       this.addToast('error', 'Changement de rôle interdit. Déconnectez-vous pour changer de compte.')
     },
-    selectDossier(d: any) { this.selectedDossier = d },
+    selectDossier(d: any) {
+      this.selectedDossier = d
+      if (d?.id != null) {
+        void this.loadSelectedDossierDetails(d.id)
+      }
+    },
     openModal(name: string, data: any = null) {
       this.activeModal = name;
       this.modalOpen = true;

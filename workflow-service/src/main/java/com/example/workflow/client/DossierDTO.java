@@ -10,7 +10,9 @@ import lombok.Data;
 public class DossierDTO {
 
     private Long id;
+    private String numero;
     private String titre;
     private String statut;
     private Long userId;
+    private String serviceCible;
 }

@@ -36,13 +36,12 @@ const contratForm = reactive({
   observations: ''
 })
 
-const wfSteps = ['Réception', 'Enregistrement', 'Traitement', 'Validation', 'Paiement', 'Archivage']
+const wfSteps = computed(() => store.wfSteps)
 
-const dossiersJuridique = ref([
-  { id: 1, ref: 'CO-2026-0845', objet: 'Révision contrat fournisseur informatique', expediteur: 'Service Informatique', nature: 'Contractuel', delai: 'Demain 17h' },
-  { id: 2, ref: 'CO-2026-0840', objet: 'Litige prestataire nettoyage', expediteur: 'Service Administratif', nature: 'Contentieux', delai: '03/06/2026' },
-  { id: 3, ref: 'CO-2026-0836', objet: 'Conformité RGPD plateforme cloud', expediteur: 'Direction SI', nature: 'Réglementaire', delai: '10/06/2026' },
-])
+const dossiersJuridique = computed(() => {
+  const taskDossierIds = store.workflowTasks.map((t: any) => String(t.dossierId))
+  return store.dossiers.filter((d: any) => taskDossierIds.includes(String(d.id)))
+})
 
 const contrats = ref([
   { id: 1, objet: 'Contrat maintenance informatique', partie: 'SARL TechSolutions', statut: 'En révision' },
@@ -65,9 +64,17 @@ const openAvis = (d: any) => {
   store.addToast('info', `Dossier juridique ${d.ref} ouvert`)
 }
 
-const submitAvis = () => {
-  page.value = 'dashboard'
-  store.addToast('success', 'Avis juridique soumis et transmis !')
+const submitAvis = async () => {
+  if (avisForm.dossier) {
+    try {
+      const note = `Nature: ${avisForm.nature}\nConclusion: ${avisForm.conclusion}\nAnalyse: ${avisForm.analyse}\nRecommandations: ${avisForm.recommandations}`
+      await store.completeTraitementWorkflow(avisForm.dossier.id, note, avisForm.conclusion)
+      store.addToast('success', 'Avis transmis au DG pour validation')
+      page.value = 'dashboard'
+    } catch(e) {
+      store.addToast('error', 'Erreur lors du traitement')
+    }
+  }
 }
 
 const addContract = () => {
@@ -76,6 +83,15 @@ const addContract = () => {
 }
 
 const addToast = (type: string, msg: string) => store.addToast(type, msg)
+
+const openDocs = (d: any) => {
+  const id = d?.id
+  if (!id) {
+    addToast('error', 'Dossier introuvable pour consulter les documents')
+    return
+  }
+  store.openArchiveDetails(id)
+}
 
 const getNatureBadgeStyle = (nature: string) => {
   if (nature === 'Contentieux') return { background: 'var(--red-s)', color: 'var(--red)' }
@@ -100,12 +116,12 @@ const getNatureBadgeStyle = (nature: string) => {
     <div class="content">
       <!-- Workflow bar -->
       <div class="workflow-bar">
-        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: i < 2, active: i === 2 }">
+        <div v-for="(s, i) in wfSteps" :key="i" class="wf-step" :class="{ done: s.done, active: s.active }">
           <div class="wf-circle">
-            <span v-if="i < 2">✓</span>
+            <span v-if="s.done">✓</span>
             <span v-else>{{ i + 1 }}</span>
           </div>
-          <div class="wf-label">{{ s }}</div>
+          <div class="wf-label">{{ s.label }}</div>
         </div>
       </div>
 
@@ -121,7 +137,7 @@ const getNatureBadgeStyle = (nature: string) => {
             <div class="stat-lbl">Dossiers juridiques</div>
           </div>
           <div class="stat-card red">
-            <div class="stat-val" style="color: var(--red)">{{ dossiersJuridique.filter(d => d.nature === 'Contentieux').length }}</div>
+            <div class="stat-val" style="color: var(--red)">{{ dossiersJuridique.filter((d: any) => d.urgent).length }}</div>
             <div class="stat-lbl">Contentieux actifs</div>
           </div>
           <div class="stat-card amber">
@@ -156,23 +172,26 @@ const getNatureBadgeStyle = (nature: string) => {
               </thead>
               <tbody>
                 <tr v-for="d in dossiersJuridique" :key="d.id">
-                  <td><span class="td-ref">{{ d.ref }}</span></td>
+                  <td><span class="td-ref">{{ d.numero }}</span></td>
                   <td>
                     <div class="td-obj">{{ d.objet }}</div>
                     <div class="td-sub">{{ d.expediteur }}</div>
                   </td>
                   <td>
-                    <span class="badge" :style="getNatureBadgeStyle(d.nature)">{{ d.nature }}</span>
+                    <span class="badge" :style="getNatureBadgeStyle('Contractuel')">{{ d.priorite || (d.urgent ? 'Urgent' : 'Normal') }}</span>
                   </td>
-                  <td style="font-size: 11px; color: var(--red); font-weight: 600">{{ d.delai }}</td>
+                  <td style="font-size: 11px; color: var(--red); font-weight: 600">{{ d.deadline }}</td>
                   <td>
-                    <button class="btn btn-purple-soft btn-sm" @click="openAvis(d)">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                      </svg>
-                      Rédiger avis
-                    </button>
+                    <div style="display: flex; gap: 6px">
+                      <button class="btn btn-purple-soft btn-sm" @click="openAvis(d)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                        Rédiger avis
+                      </button>
+                      <button class="btn btn-outline btn-sm" @click="openDocs(d)">Consulter</button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -221,7 +240,7 @@ const getNatureBadgeStyle = (nature: string) => {
               <div class="form-group">
                 <label class="form-label">Dossier concerné<span class="form-required">*</span></label>
                 <select class="form-select" v-model="avisForm.dossier">
-                  <option v-for="d in dossiersJuridique" :key="d.id" :value="d">{{ d.ref }} — {{ d.objet }}</option>
+                  <option v-for="d in dossiersJuridique" :key="d.id" :value="d">{{ d.numero }} — {{ d.objet }}</option>
                 </select>
               </div>
               <div class="form-group">
@@ -269,6 +288,7 @@ const getNatureBadgeStyle = (nature: string) => {
             </div>
             <div class="form-actions">
               <button class="btn btn-outline" @click="page = 'dashboard'">Annuler</button>
+              <button class="btn btn-outline" v-if="avisForm.dossier" @click="openDocs(avisForm.dossier)">Voir documents</button>
               <button class="btn btn-purple-soft" @click="addToast('info', 'Avis sauvegardé en brouillon')">Brouillon</button>
               <button class="btn btn-primary" @click="submitAvis">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>

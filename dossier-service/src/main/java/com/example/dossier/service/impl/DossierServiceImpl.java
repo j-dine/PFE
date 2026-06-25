@@ -38,7 +38,27 @@ public class DossierServiceImpl implements DossierService {
         appendHistorique(saved, "CREATION", defaultActor(saved), "Creation du dossier",
                 null, saved.getStatut() != null ? saved.getStatut().name() : null, null, null);
 
-        // 3) Persist history through cascade (or direct repo)
+        // 3) Synchro immédiate (BO -> assignation agent/service)
+        // Si BO fournit déjà serviceCible et/ou userId dans le JSON de création,
+        // alors on assigne le dossier dès la création.
+        if ((saved.getServiceCible() != null && !saved.getServiceCible().isBlank()) || saved.getUserId() != null) {
+            if (saved.getServiceCible() != null && saved.getServiceCible().isBlank()) {
+                saved.setServiceCible(null);
+            }
+            appendHistorique(
+                    saved,
+                    "ASSIGNATION",
+                    defaultActor(saved),
+                    "Assigne a " + (saved.getServiceCible() != null ? saved.getServiceCible() : "-") +
+                            " / userId=" + (saved.getUserId() != null ? saved.getUserId() : "-"),
+                    null,
+                    null,
+                    null,
+                    null
+            );
+        }
+
+        // 4) Persist history through cascade (or direct repo)
         saved = dossierRepository.save(saved);
         return toDTO(saved);
     }

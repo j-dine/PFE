@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useAppStore } from '../stores/appStore'
 import DocumentsSection from '../components/DocumentsSection.vue'
+import DossierCommentsSection from '../components/DossierCommentsSection.vue'
 
 const store = useAppStore()
 
@@ -18,14 +19,26 @@ const dossierForm = ref({
   description: ''
 })
 
+const MAX_FILE_BYTES = 10 * 1024 * 1024
+
 const handleFileSelect = (e: Event) => {
   const target = e.target as HTMLInputElement
   const incoming = target.files ? Array.from(target.files) : []
   if (!incoming.length) return
 
+  const tooLarge = incoming.filter(f => f.size > MAX_FILE_BYTES)
+  if (tooLarge.length) {
+    addToast('error', `Fichier(s) trop volumineux (max 10 Mo) : ${tooLarge.map(f => f.name).join(', ')}`)
+  }
+  const accepted = incoming.filter(f => f.size <= MAX_FILE_BYTES)
+  if (!accepted.length) {
+    target.value = ''
+    return
+  }
+
   const keyOf = (f: File) => `${f.name}::${f.size}::${f.lastModified}`
   const existing = new Map(selectedFiles.value.map(f => [keyOf(f), f]))
-  for (const f of incoming) existing.set(keyOf(f), f)
+  for (const f of accepted) existing.set(keyOf(f), f)
   selectedFiles.value = Array.from(existing.values())
 
   // Allow selecting the same file again later (after removing it).
@@ -75,10 +88,14 @@ const submitDossier = async () => {
     if (selectedFiles.value.length && newDossier?.id) {
       try {
         await store.uploadDossierDocuments(newDossier.id, selectedFiles.value, 'original')
-      } catch (uploadError) {
+        addToast('success', `${selectedFiles.value.length} fichier(s) uploadé(s) avec succès !`)
+      } catch (uploadError: any) {
         console.error('Erreur upload document:', uploadError)
-        // "warn" n'existe pas dans le composant Toasts (success/info/error uniquement)
-        addToast('info', 'Dossier créé mais certains documents n\'ont pas pu être joints.')
+        const status = uploadError?.response?.status
+        const errorMsg = status === 413
+          ? 'Fichier trop volumineux pour le serveur (max 10 Mo).'
+          : (uploadError?.response?.data?.message || uploadError?.message || 'Erreur inconnue')
+        addToast('error', `Erreur lors de l'upload des documents : ${errorMsg}`)
       }
     }
 
@@ -144,6 +161,8 @@ const isLoadingDossiers = computed(() => store.isLoadingDossiers)
 const aboStats = computed(() => store.aboStats)
 const selectedDocsLoading = computed(() => store.selectedDossierDocsLoading)
 const selectedDocs = computed(() => store.selectedDossierDocuments || [])
+const selectedHistorique = computed(() => store.selectedDossierHistorique || selectedDossier.value?.historique || [])
+const selectedHistoriqueLoading = computed(() => store.selectedDossierHistoriqueLoading)
 const currentRole = computed(() => store.currentRole)
 
 const canDeleteDocs = computed(() => {
@@ -260,7 +279,7 @@ const completeEnregistrement = async () => {
     <template v-if="activeView==='abo-dashboard'">
       <div class="stats stats-4">
         <div class="stat-card sc-blue"><div class="stat-label">Dossiers créés</div><div class="stat-value">{{aboStats.crees}}</div><div class="stat-delta">Total base</div></div>
-        <div class="stat-card sc-amber"><div class="stat-label">En traitement</div><div class="stat-value">{{aboStats.enTraitement}}</div><div class="stat-delta">Assignés AS</div></div>
+        <div class="stat-card sc-amber"><div class="stat-label">En traitement</div><div class="stat-value">{{aboStats.enTraitement}}</div><div class="stat-delta">Assignés aux services</div></div>
         <div class="stat-card sc-green"><div class="stat-label">Archivés</div><div class="stat-value">{{aboStats.archives}}</div><div class="stat-delta">Clôturés</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Urgents</div><div class="stat-value">{{aboStats.urgents}}</div><div class="stat-delta">Action requise</div></div>
       </div>
@@ -372,7 +391,7 @@ const completeEnregistrement = async () => {
               <select class="form-select" v-model="dossierForm.typeDocument"><option>Courrier entrant</option><option>Courrier sortant</option><option>Note interne</option><option>Demande</option><option>Rapport</option></select></div>
             <div class="form-group" style="grid-column:1/-1"><label class="form-label">Objet du dossier *</label><input type="text" class="form-input" placeholder="Décrivez l'objet du dossier..." v-model="dossierForm.objet"></div>
             <div class="form-group"><label class="form-label">Service destinataire</label>
-              <select class="form-select" v-model="dossierForm.serviceCible"><option value="">-- Choisir --</option><option>Direction Générale</option><option>Service Financier</option><option>Service Technique</option><option>Service RH</option><option>Service Juridique</option></select></div>
+              <select class="form-select" v-model="dossierForm.serviceCible"><option value="">-- Choisir --</option><option>Direction Générale</option><option>Service Technique</option><option>Service RH</option><option>Service Juridique</option><option>Service Financier</option></select></div>
             <div class="form-group"><label class="form-label">Priorité</label>
               <select class="form-select" v-model="dossierForm.priorite"><option value="NORMALE">Normal</option><option value="URGENT">Urgent</option><option value="TRES_URGENT">Très urgent</option></select></div>
             <div class="form-group" style="grid-column:1/-1"><label class="form-label">Description / Remarques</label><textarea class="form-textarea" placeholder="Informations complémentaires..." v-model="dossierForm.description"></textarea></div>
@@ -483,7 +502,7 @@ const completeEnregistrement = async () => {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                 Modifier dossier
               </button>
-              <button class="btn btn-soft-amber" style="width:100%;justify-content:center" @click="openModal('archiver')" v-if="String(selectedDossier.statutRaw||'').toUpperCase()==='PAYE'">
+              <button class="btn btn-soft-amber" style="width:100%;justify-content:center" @click="openModal('archiver')" v-if="['PAYE','VALIDE','REJETE'].includes(String(selectedDossier.statutRaw||'').toUpperCase())">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/></svg>
                 Archiver le dossier
               </button>
@@ -509,13 +528,11 @@ const completeEnregistrement = async () => {
               </template>
             </DocumentsSection>
 
-            <div style="border-top:1px solid var(--border);padding:14px 18px 4px">
-              <div style="font-size:11px;font-weight:700;margin-bottom:10px">Historique des actions</div>
-              <div class="tl-item" v-for="h in selectedDossier.historique" :key="h.id">
-                <div class="tl-dot" :style="{background:h.bg,color:h.color}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" v-html="h.icon" style="width:11px;height:11px"></svg></div>
-                <div><div class="tl-title">{{h.action}}</div><div class="tl-desc">{{h.user}}</div><div class="tl-time">{{h.date}}</div></div>
-              </div>
-            </div>
+            <DossierCommentsSection
+              :description="selectedDossier.description || ''"
+              :entries="selectedHistorique"
+              :loading="selectedHistoriqueLoading"
+            />
           </div>
           <div class="empty-state" v-else>
             <svg viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.5" style="width:40px;height:40px;margin:0 auto 10px;display:block"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -532,18 +549,29 @@ const completeEnregistrement = async () => {
         <div style="padding:22px">
           <div class="form-grid form-2" style="gap:16px">
             <div class="form-group"><label class="form-label">Type courrier</label>
-              <select class="form-select"><option>Entrant</option><option>Sortant</option><option>Interne</option></select></div>
-            <div class="form-group"><label class="form-label">Date réception</label><input type="date" class="form-input" :value="todayISO"></div>
-            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Expéditeur</label><input type="text" class="form-input" placeholder="Nom / organisme expéditeur"></div>
-            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Objet</label><input type="text" class="form-input" placeholder="Objet du courrier..."></div>
+              <select class="form-select" v-model="dossierForm.typeDocument"><option>Courrier entrant</option><option>Courrier sortant</option><option>Note interne</option></select></div>
+            <div class="form-group"><label class="form-label">Date réception</label><input type="date" class="form-input" v-model="dossierForm.dateReception"></div>
+            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Expéditeur</label><input type="text" class="form-input" placeholder="Nom / organisme expéditeur" v-model="dossierForm.expediteur"></div>
+            <div class="form-group" style="grid-column:1/-1"><label class="form-label">Objet</label><input type="text" class="form-input" placeholder="Objet du courrier..." v-model="dossierForm.objet"></div>
             <div class="form-group"><label class="form-label">Service destinataire</label>
-              <select class="form-select"><option>Direction Générale</option><option>Service Financier</option><option>Service Technique</option><option>RH</option></select></div>
+              <select class="form-select" v-model="dossierForm.serviceCible"><option value="">-- Choisir --</option><option>Direction Générale</option><option>Service Financier</option><option>Service Technique</option><option>Service RH</option><option>Service Juridique</option></select></div>
             <div class="form-group"><label class="form-label">Priorité</label>
-              <select class="form-select"><option>Normal</option><option>Urgent</option><option>Très urgent</option></select></div>
+              <select class="form-select" v-model="dossierForm.priorite"><option value="NORMALE">Normal</option><option value="URGENT">Urgent</option><option value="TRES_URGENT">Très urgent</option></select></div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label class="form-label">Joindre documents (optionnel)</label>
+              <input type="file" ref="fileInput" style="display:none" multiple @change="handleFileSelect">
+              <div @click="triggerFileInput" style="border:2px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;background:var(--bg)">
+                <div style="font-size:12px;color:var(--muted)">
+                  <span v-if="!selectedFiles.length">Cliquez pour sélectionner des fichiers</span>
+                  <span v-else style="color:var(--green);font-weight:700">{{selectedFiles.length}} fichier(s) sélectionné(s)</span>
+                </div>
+                <div style="font-size:10px;color:var(--faint);margin-top:4px">PDF, JPG, PNG — Max 10 Mo</div>
+              </div>
+            </div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
             <button class="btn btn-outline" @click="activeView='abo-dashboard'">Annuler</button>
-            <button class="btn btn-primary" @click="activeView='abo-consulter';addToast('success','Courrier enregistré avec succès !')">
+            <button class="btn btn-primary" @click="submitDossier">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
               Enregistrer courrier
             </button>
